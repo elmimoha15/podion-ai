@@ -39,10 +39,11 @@ const workspaces = [
 ];
 
 export function AppSidebar() {
-  const { collapsed } = useSidebar();
+  const { state } = useSidebar();
   const location = useLocation();
   const currentPath = location.pathname;
   const [workspacesOpen, setWorkspacesOpen] = useState(true);
+  const collapsed = state === "collapsed";
 
   const isActive = (path: string) => currentPath === path;
   
