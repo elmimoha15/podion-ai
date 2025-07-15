@@ -77,12 +77,12 @@ const Dashboard = () => {
   ];
 
   return (
-    <div className="gradient-bg min-h-screen">
+    <div className="bg-gradient-to-br from-blue-50 via-white to-blue-100 min-h-screen">
       <div className="p-6 space-y-8">
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 animate-fade-in">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Welcome back, John</h1>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">Welcome back, John</h1>
             <p className="text-gray-600 mt-1">
               Here's what's happening with your podcasts today
             </p>
@@ -94,7 +94,7 @@ const Dashboard = () => {
               Professional Plan
             </Badge>
             <Link to="/upload">
-              <Button className="blue-gradient text-white hover:shadow-lg transform hover:scale-105 transition-all duration-300">
+              <Button className="bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:shadow-xl transform hover:scale-105 transition-all duration-300 border-0">
                 <Upload className="h-4 w-4 mr-2" />
                 Upload Episode
               </Button>
@@ -105,17 +105,17 @@ const Dashboard = () => {
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {stats.map((stat, index) => (
-            <Card key={index} className="hover:shadow-xl transition-all duration-500 transform hover:-translate-y-2 card-gradient animate-scale-in" style={{ animationDelay: `${index * 0.1}s` }}>
+            <Card key={index} className="hover:shadow-xl transition-all duration-500 transform hover:-translate-y-2 bg-gradient-to-br from-white to-blue-50/50 border-blue-100 animate-scale-in group" style={{ animationDelay: `${index * 0.1}s` }}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-gray-600">
                   {stat.title}
                 </CardTitle>
-                <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors duration-300">
+                <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center group-hover:from-blue-100 group-hover:to-blue-200 transition-all duration-300">
                   <stat.icon className="h-4 w-4 text-blue-600" />
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
+                <div className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">{stat.value}</div>
                 <p className="text-xs text-green-600 flex items-center mt-1 group-hover:scale-105 transition-transform duration-300">
                   <TrendingUp className="h-3 w-3 mr-1" />
                   {stat.change} from last month
@@ -128,10 +128,10 @@ const Dashboard = () => {
         {/* Quick Actions */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
           {quickActions.map((action, index) => (
-            <Card key={index} className="group hover:shadow-xl transition-all duration-500 cursor-pointer border-gray-100 transform hover:-translate-y-2 card-gradient">
+            <Card key={index} className="group hover:shadow-xl transition-all duration-500 cursor-pointer border-blue-100 transform hover:-translate-y-2 bg-gradient-to-br from-white to-blue-50/30">
               <Link to={action.link}>
                 <CardHeader>
-                  <div className={`h-12 w-12 rounded-lg ${action.color} flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300`}>
+                  <div className={`h-12 w-12 rounded-xl ${action.color} flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-lg`}>
                     <action.icon className="h-6 w-6 text-white" />
                   </div>
                   <CardTitle className="text-lg group-hover:text-blue-600 transition-colors duration-300">{action.title}</CardTitle>
@@ -143,7 +143,7 @@ const Dashboard = () => {
         </div>
 
         {/* Recent Generations */}
-        <Card className="card-gradient shadow-lg animate-fade-in-up" style={{ animationDelay: '0.6s' }}>
+        <Card className="bg-gradient-to-br from-white to-blue-50/30 border-blue-100 shadow-lg animate-fade-in-up" style={{ animationDelay: '0.6s' }}>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>

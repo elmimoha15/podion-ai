@@ -14,7 +14,18 @@ import {
   Users,
   TrendingUp,
   Sparkles,
-  Star
+  Star,
+  BarChart3,
+  Globe,
+  Shield,
+  Headphones,
+  MessageSquare,
+  Download,
+  Heart,
+  Award,
+  Smartphone,
+  Laptop,
+  TabletSmartphone
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import AnimatedBackground from "@/components/AnimatedBackground";
@@ -111,6 +122,66 @@ const LandingPage = () => {
       question: "How long does processing take?",
       answer: "Most episodes are processed in 2-5 minutes, depending on length. You'll get real-time updates on progress."
     }
+  ];
+
+  const benefits = [
+    {
+      icon: BarChart3,
+      title: "10x Your Reach",
+      description: "Turn one podcast into 15+ pieces of content for maximum audience growth.",
+      delay: "0s"
+    },
+    {
+      icon: Clock,
+      title: "Save 20+ Hours Weekly",
+      description: "Automate content creation and focus on what you do best - podcasting.",
+      delay: "0.1s"
+    },
+    {
+      icon: Globe,
+      title: "SEO Optimization",
+      description: "Get discovered by new audiences with search-optimized content.",
+      delay: "0.2s"
+    },
+    {
+      icon: Target,
+      title: "Higher Engagement",
+      description: "AI-crafted content that resonates with your audience across all platforms.",
+      delay: "0.3s"
+    }
+  ];
+
+  const testimonials = [
+    {
+      name: "Sarah Chen",
+      role: "Tech Podcast Host",
+      content: "Podion AI transformed my workflow. What used to take me 6 hours now takes 15 minutes!",
+      avatar: "SC",
+      rating: 5
+    },
+    {
+      name: "Mike Rodriguez",
+      role: "Business Podcaster",
+      content: "The SEO content has doubled my organic traffic. My episodes are reaching audiences I never imagined.",
+      avatar: "MR",
+      rating: 5
+    },
+    {
+      name: "Emily Watson",
+      role: "Creative Director",
+      content: "The social media captions are spot-on. My engagement rates have increased by 300%.",
+      avatar: "EW",
+      rating: 5
+    }
+  ];
+
+  const platforms = [
+    { name: "Spotify", icon: "🎵" },
+    { name: "Apple Podcasts", icon: "🎧" },
+    { name: "Google Podcasts", icon: "🔍" },
+    { name: "YouTube", icon: "📹" },
+    { name: "SoundCloud", icon: "☁️" },
+    { name: "Anchor", icon: "⚓" }
   ];
 
   return (
@@ -261,6 +332,180 @@ const LandingPage = () => {
               </Card>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* Benefits Section */}
+      <section className="py-20 relative z-10">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-16 animate-fade-in-up">
+            <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+              Why Choose Podion AI?
+            </h2>
+            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+              Join thousands of podcasters who've transformed their content strategy
+            </p>
+          </div>
+          
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+            {benefits.map((benefit, index) => (
+              <Card key={index} className="text-center group hover:shadow-xl transition-all duration-500 border-gray-100 transform hover:-translate-y-2 card-gradient animate-fade-in-up" style={{ animationDelay: benefit.delay }}>
+                <CardHeader>
+                  <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
+                    <benefit.icon className="h-8 w-8 text-white" />
+                  </div>
+                  <CardTitle className="text-xl group-hover:text-blue-600 transition-colors duration-300">{benefit.title}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-gray-600">{benefit.description}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section className="py-20 gradient-bg relative z-10">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-16 animate-fade-in-up">
+            <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+              Loved by Podcasters Worldwide
+            </h2>
+            <p className="text-xl text-gray-600">
+              See what our community is saying about Podion AI
+            </p>
+          </div>
+          
+          <div className="grid lg:grid-cols-3 gap-8">
+            {testimonials.map((testimonial, index) => (
+              <Card key={index} className="relative overflow-hidden group hover:shadow-xl transition-all duration-500 transform hover:-translate-y-2 card-gradient animate-scale-in" style={{ animationDelay: `${index * 0.1}s` }}>
+                <CardHeader>
+                  <div className="flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-bold">
+                      {testimonial.avatar}
+                    </div>
+                    <div>
+                      <h4 className="font-semibold">{testimonial.name}</h4>
+                      <p className="text-sm text-gray-600">{testimonial.role}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-1">
+                    {Array.from({ length: testimonial.rating }).map((_, i) => (
+                      <Star key={i} className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                    ))}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-gray-700 italic">"{testimonial.content}"</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Platform Integration */}
+      <section className="py-20 relative z-10">
+        <div className="container mx-auto px-4 text-center">
+          <div className="animate-fade-in-up mb-12">
+            <h3 className="text-2xl lg:text-3xl font-bold text-gray-900 mb-4">
+              Works with All Major Platforms
+            </h3>
+            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+              Seamlessly integrate with your favorite podcast hosting and social media platforms
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-3 lg:grid-cols-6 gap-8 items-center opacity-60 hover:opacity-80 transition-opacity duration-300">
+            {platforms.map((platform, index) => (
+              <div key={index} className="text-center group animate-fade-in-up" style={{ animationDelay: `${index * 0.1}s` }}>
+                <div className="text-4xl mb-2 group-hover:scale-110 transition-transform duration-300">
+                  {platform.icon}
+                </div>
+                <p className="text-sm font-medium text-gray-700">{platform.name}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Device Showcase */}
+      <section className="py-20 gradient-bg relative z-10">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-16 animate-fade-in-up">
+            <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+              Access Anywhere, Anytime
+            </h2>
+            <p className="text-xl text-gray-600">
+              Create content on the go with our responsive design
+            </p>
+          </div>
+          
+          <div className="flex justify-center items-center gap-8 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
+            <div className="text-center group">
+              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
+                <Smartphone className="h-8 w-8 text-white" />
+              </div>
+              <p className="font-medium text-gray-700">Mobile</p>
+            </div>
+            <div className="text-center group">
+              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
+                <TabletSmartphone className="h-8 w-8 text-white" />
+              </div>
+              <p className="font-medium text-gray-700">Tablet</p>
+            </div>
+            <div className="text-center group">
+              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
+                <Laptop className="h-8 w-8 text-white" />
+              </div>
+              <p className="font-medium text-gray-700">Desktop</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-20 relative z-10">
+        <div className="container mx-auto px-4 text-center">
+          <Card className="max-w-4xl mx-auto card-gradient border-blue-200 animate-fade-in-up">
+            <CardContent className="py-16">
+              <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-6">
+                Ready to Transform Your Podcast?
+              </h2>
+              <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+                Join over 10,000 podcasters who've already revolutionized their content creation process
+              </p>
+              
+              <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
+                <Link to="/signup">
+                  <Button size="lg" className="text-lg px-8 py-6 blue-gradient text-white hover:shadow-xl transform hover:scale-105 transition-all duration-300">
+                    Start Your Free Trial
+                    <ArrowRight className="ml-2 h-5 w-5" />
+                  </Button>
+                </Link>
+                <Button size="lg" variant="outline" className="text-lg px-8 py-6 hover:bg-blue-50 transform hover:scale-105 transition-all duration-300">
+                  <Play className="mr-2 h-5 w-5" />
+                  Watch Demo
+                </Button>
+              </div>
+              
+              <div className="flex items-center justify-center gap-8 text-sm text-gray-500">
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-500" />
+                  14-day free trial
+                </div>
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-500" />
+                  No setup fees
+                </div>
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-500" />
+                  Cancel anytime
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </section>
 
