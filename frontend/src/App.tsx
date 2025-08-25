@@ -1,4 +1,5 @@
 
+import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -7,6 +8,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
+import { paddleApi } from "@/services/paddleApi";
 
 // Pages
 import LandingPage from "./pages/LandingPage";
@@ -164,6 +166,20 @@ const AppRoutes = () => {
 };
 
 const App = () => {
+  useEffect(() => {
+    // Initialize Paddle.js when app loads
+    const initializePaddle = () => {
+      if (typeof window !== 'undefined' && window.Paddle) {
+        paddleApi.initializePaddle();
+      } else {
+        // Retry after a short delay if Paddle.js hasn't loaded yet
+        setTimeout(initializePaddle, 100);
+      }
+    };
+    
+    initializePaddle();
+  }, []);
+
   return (
     <AuthProvider>
       <WorkspaceProvider>

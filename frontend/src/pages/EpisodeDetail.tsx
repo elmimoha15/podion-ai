@@ -344,7 +344,28 @@ The future of AI in business isn't about replacement—it's about enhancement. O
 
   const blogPost = formatBlogPost(podcast.seo_content?.blog_post);
 
-  const showNotes = podcast.seo_content?.show_notes || `# Episode 45: The Future of AI in Business
+  // Helper function to format show notes
+  const formatShowNotes = (showNotesData: any) => {
+    // If it's already a string, return it
+    if (typeof showNotesData === 'string') {
+      return showNotesData;
+    }
+    
+    // If it's an array of objects with timestamp, topic, summary
+    if (Array.isArray(showNotesData) && showNotesData.length > 0) {
+      return showNotesData.map((note: any, index: number) => (
+        <div key={index} className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-medium text-blue-600">{note.timestamp}</span>
+            <span className="text-sm font-semibold text-gray-800">{note.topic}</span>
+          </div>
+          <p className="text-sm text-gray-600">{note.summary}</p>
+        </div>
+      ));
+    }
+    
+    // Fallback content
+    return `# Episode Show Notes
 
 ## Episode Overview
 
@@ -357,83 +378,10 @@ In this comprehensive discussion, we explore the transformative impact of artifi
 
 ## Key Timestamps
 
-**[00:00 - 01:30]** Introduction and Guest Welcomes
-- Show introduction and context setting
-- Guest background and expertise overview
+**[00:00 - 01:30]** Introduction and Guest Welcomes`;
+  };
 
-**[01:45 - 04:45]** Three Pillars of AI Transformation (Dr. Johnson)
-- Automation beyond manufacturing
-- Predictive analytics revolution
-- Personalization at scale
-
-**[05:30 - 08:00]** Real-World Implementation (Mark Thompson)
-- InnovateTech's AI journey
-- 40% reduction in support tickets
-- 60% improvement in sales forecasting
-- Augmented decision making concept
-
-**[08:30 - 12:15]** Implementation Challenges
-- Data quality and quantity issues
-- Change management strategies
-- Ethical considerations in AI deployment
-
-**[12:30 - 18:45]** Industry-Specific Applications
-- Healthcare AI innovations
-- Financial services transformation
-- Retail and e-commerce evolution
-- Manufacturing 4.0 developments
-
-**[19:00 - 25:30]** Future Predictions and Trends
-- Next 5-year outlook for business AI
-- Emerging technologies to watch
-- Skills development for the AI era
-
-**[25:45 - 30:00]** Practical Implementation Advice
-- Starting your AI journey
-- Measuring success and ROI
-- Building AI-ready teams
-
-**[30:15 - 35:45]** Ethical AI and Responsible Deployment
-- Bias mitigation strategies
-- Transparency in AI decision-making
-- Regulatory compliance considerations
-
-**[36:00 - 42:30]** Q&A and Listener Questions
-- Small business AI adoption
-- Cost considerations and budgeting
-- Common implementation mistakes
-
-**[42:45 - 45:23]** Closing Thoughts and Resources
-- Key takeaways summary
-- Recommended reading and resources
-- Next episode preview
-
-## Episode Resources
-
-### Mentioned Tools and Platforms
-- TensorFlow and PyTorch for ML development
-- AWS AI/ML services
-- Google Cloud AI Platform
-- Microsoft Azure Cognitive Services
-
-### Recommended Reading
-- "Prediction Machines" by Ajay Agrawal
-- "The AI Advantage" by Thomas Davenport
-- "Human + Machine" by Paul Daugherty
-
-### Useful Links
-- Stanford AI Research: ai.stanford.edu
-- InnovateTech Solutions: innovatetech.com
-- AI Ethics Guidelines: partnership.ai
-
-## Episode Stats
-- **Duration**: 45 minutes 23 seconds
-- **Recording Date**: January 15, 2024
-- **Guests**: 2
-- **Topics Covered**: 8 major themes
-- **Practical Tips**: 15+ actionable insights
-
-*Subscribe to Tech Talk Show for weekly deep dives into technology trends shaping the future of business.*`;
+  const showNotes = formatShowNotes(podcast.seo_content?.show_notes);
 
   // Helper function to format social media content
   const formatSocialMedia = (socialMediaData: any) => {
@@ -635,9 +583,15 @@ Listen now: [link]
             </CardHeader>
             <CardContent>
               <div className="prose max-w-none">
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-700">
-                  {showNotes}
-                </pre>
+                {typeof showNotes === 'string' ? (
+                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-700">
+                    {showNotes}
+                  </pre>
+                ) : (
+                  <div className="space-y-2">
+                    {showNotes}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

@@ -162,19 +162,34 @@ def list_user_podcasts(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     try:
         db = get_firestore_client()
         
-        # Query podcasts for user, ordered by creation date (newest first)
-        query = db.collection("podcasts") \
-                  .where("user_id", "==", user_id) \
-                  .order_by("metadata.created_at", direction=firestore.Query.DESCENDING) \
-                  .limit(limit)
-        
-        docs = query.stream()
+        # First try to query with ordering by metadata.created_at
+        try:
+            query = db.collection("podcasts") \
+                      .where("user_id", "==", user_id) \
+                      .order_by("metadata.created_at", direction=firestore.Query.DESCENDING) \
+                      .limit(limit)
+            
+            docs = list(query.stream())
+            
+        except Exception as order_error:
+            logger.warning(f"Failed to order by metadata.created_at, trying without ordering: {str(order_error)}")
+            # Fallback: query without ordering if metadata.created_at doesn't exist on all docs
+            query = db.collection("podcasts") \
+                      .where("user_id", "==", user_id) \
+                      .limit(limit)
+            
+            docs = list(query.stream())
         
         podcasts = []
         for doc in docs:
             podcast_data = doc.to_dict()
             podcast_data["doc_id"] = doc.id
+            podcast_data["id"] = doc.id  # Add id field for frontend compatibility
             podcasts.append(podcast_data)
+        
+        # Sort in Python if we couldn't sort in Firestore
+        if podcasts:
+            podcasts.sort(key=lambda x: x.get("metadata", {}).get("created_at", ""), reverse=True)
         
         logger.info(f"Retrieved {len(podcasts)} podcasts for user {user_id}")
         

@@ -1,9 +1,12 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, Zap, Crown, Rocket } from "lucide-react";
+import { Check, Zap, Crown, Rocket, Loader2, CreditCard } from "lucide-react";
+import { paddleApi } from "@/services/paddleApi";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 interface Plan {
   id: string;
@@ -17,25 +20,40 @@ interface Plan {
 
 interface PlanSelectionProps {
   onPlanSelected: (planId: string) => void;
+  onPaymentSuccess?: (planId: string) => void;
 }
 
 const plans: Plan[] = [
   {
-    id: "starter",
-    name: "Starter",
-    price: "$9",
-    description: "Perfect for new podcasters",
+    id: "free",
+    name: "Free",
+    price: "$0",
+    description: "Perfect for getting started",
     icon: Zap,
     features: [
+      "1 episode per month",
+      "Basic transcription",
+      "Simple show notes",
+      "Community support"
+    ]
+  },
+  {
+    id: "starter",
+    name: "Starter",
+    price: "$10",
+    description: "Perfect for new podcasters",
+    icon: Rocket,
+    features: [
       "5 episodes per month",
-      "Basic SEO content generation",
-      "Social media captions",
+      "AI transcription",
+      "SEO content generation",
+      "Social media posts",
       "Email support"
     ]
   },
   {
-    id: "creator",
-    name: "Creator",
+    id: "pro",
+    name: "Pro",
     price: "$29",
     description: "For growing podcasts",
     icon: Crown,
@@ -49,9 +67,9 @@ const plans: Plan[] = [
     ]
   },
   {
-    id: "pro",
-    name: "Pro",
-    price: "$99",
+    id: "elite",
+    name: "Elite",
+    price: "$69",
     description: "For podcast networks",
     icon: Rocket,
     features: [
@@ -65,12 +83,181 @@ const plans: Plan[] = [
   }
 ];
 
-const PlanSelection = ({ onPlanSelected }: PlanSelectionProps) => {
-  const [selectedPlan, setSelectedPlan] = useState<string>("creator");
+const PlanSelection = ({ onPlanSelected, onPaymentSuccess }: PlanSelectionProps) => {
+  const { currentUser } = useAuth();
+  const [selectedPlan, setSelectedPlan] = useState<string>("pro");
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paymentPlan, setPaymentPlan] = useState<string | null>(null);
 
-  const handleContinue = () => {
-    console.log("Selected plan:", selectedPlan);
-    onPlanSelected(selectedPlan);
+  // Listen for Paddle payment success and check URL parameters
+  useEffect(() => {
+    // Check URL parameters for payment success
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success');
+    const planId = urlParams.get('plan');
+    
+    if (success === 'true' && planId) {
+      console.log('Payment success detected from URL parameters:', planId);
+      
+      toast.success(`🎉 Payment successful! Welcome to ${planId.charAt(0).toUpperCase() + planId.slice(1)} plan!`);
+      
+      // Clear URL parameters
+      window.history.replaceState({}, '', window.location.pathname);
+      
+      // Clear onboarding payment context
+      localStorage.removeItem('onboarding_payment_context');
+      localStorage.removeItem('paddle_checkout_plan');
+      localStorage.removeItem('paddle_checkout_timestamp');
+      
+      // Complete onboarding with paid plan immediately
+      setTimeout(() => {
+        if (onPaymentSuccess) {
+          onPaymentSuccess(planId);
+        } else {
+          onPlanSelected(planId);
+        }
+      }, 1000);
+      
+      return; // Don't set up other listeners if we already detected success
+    }
+    
+    // Listen for Paddle payment success event
+    const handlePaddleSuccess = (event: CustomEvent) => {
+      const { planId } = event.detail;
+      console.log('Received Paddle payment success event for plan:', planId);
+      
+      toast.success(`🎉 Payment successful! Welcome to ${planId.charAt(0).toUpperCase() + planId.slice(1)} plan!`);
+      
+      // Clear onboarding payment context
+      localStorage.removeItem('onboarding_payment_context');
+      localStorage.removeItem('paddle_checkout_plan');
+      localStorage.removeItem('paddle_checkout_timestamp');
+      
+      // Complete onboarding with paid plan
+      setTimeout(() => {
+        if (onPaymentSuccess) {
+          onPaymentSuccess(planId);
+        } else {
+          onPlanSelected(planId);
+        }
+      }, 1000);
+    };
+    
+    // Add event listener
+    window.addEventListener('paddlePaymentSuccess', handlePaddleSuccess as EventListener);
+    
+    // Cleanup event listener
+    return () => {
+      window.removeEventListener('paddlePaymentSuccess', handlePaddleSuccess as EventListener);
+    };
+  }, [onPlanSelected, onPaymentSuccess]);
+
+
+
+  const handlePlanSelection = async () => {
+    if (!currentUser) {
+      toast.error('Please log in to continue');
+      return;
+    }
+
+    // If Free plan is selected, continue without payment
+    if (selectedPlan === 'free') {
+      toast.success('Welcome to Podion AI! Starting with the Free plan.');
+      onPlanSelected(selectedPlan);
+      return;
+    }
+
+    // For paid plans, initiate Paddle checkout
+    try {
+      setIsProcessingPayment(true);
+      setPaymentPlan(selectedPlan);
+      
+      // Set onboarding context for payment success handling
+      localStorage.setItem('onboarding_payment_context', 'true');
+      localStorage.setItem('onboarding_selected_plan', selectedPlan);
+      
+      const result = await paddleApi.openPaddleCheckout(selectedPlan);
+      
+      if (result.success) {
+        toast.success('Paddle checkout opened! Complete your payment to continue.');
+        
+        // Start polling for payment success
+        startPaymentPolling(selectedPlan);
+      } else {
+        throw new Error(result.error || 'Failed to open checkout');
+      }
+    } catch (error) {
+      console.error('Error opening Paddle checkout:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to open checkout';
+      toast.error(errorMessage);
+      localStorage.removeItem('onboarding_payment_context');
+      localStorage.removeItem('onboarding_selected_plan');
+    } finally {
+      setIsProcessingPayment(false);
+      setPaymentPlan(null);
+    }
+  };
+
+  const startPaymentPolling = (planId: string) => {
+    // Skip backend polling if not on localhost (backend not available in production)
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      console.log('Skipping backend polling - backend not available in production');
+      return;
+    }
+    
+    let attempts = 0;
+    const maxAttempts = 180; // 3 minutes of polling
+    
+    const pollInterval = setInterval(async () => {
+      attempts++;
+      
+      try {
+        // Check if user has an active subscription (payment succeeded)
+        const response = await fetch(`/api/v1/paddle/subscription/${currentUser?.uid}`, {
+          headers: {
+            'Authorization': `Bearer ${await currentUser?.getIdToken()}`
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          // If user has active subscription, payment succeeded
+          if (data.subscription && data.subscription.status === 'active') {
+            console.log('🎉 Payment success detected via backend!');
+            
+            clearInterval(pollInterval);
+            
+            toast.success(`🎉 Payment successful! Welcome to ${planId.charAt(0).toUpperCase() + planId.slice(1)} plan!`);
+            
+            // Clear onboarding payment context
+            localStorage.removeItem('onboarding_payment_context');
+            localStorage.removeItem('onboarding_selected_plan');
+            localStorage.removeItem('paddle_checkout_plan');
+            localStorage.removeItem('paddle_checkout_timestamp');
+            
+            // Complete onboarding with paid plan
+            setTimeout(() => {
+              if (onPaymentSuccess) {
+                onPaymentSuccess(planId);
+              } else {
+                onPlanSelected(planId);
+              }
+            }, 1000);
+            
+            return;
+          }
+        }
+      } catch (error) {
+        console.log('Polling error (normal during payment):', error);
+      }
+      
+      // Stop polling after max attempts
+      if (attempts >= maxAttempts) {
+        clearInterval(pollInterval);
+        console.log('Payment polling stopped - user may have cancelled or payment failed');
+      }
+    }, 1000); // Poll every second
   };
 
   return (
@@ -136,11 +323,30 @@ const PlanSelection = ({ onPlanSelected }: PlanSelectionProps) => {
 
       <div className="text-center">
         <Button 
-          onClick={handleContinue}
-          className="h-12 px-8 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-lg"
+          onClick={handlePlanSelection}
+          disabled={isProcessingPayment}
+          className="h-12 px-8 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-lg disabled:opacity-50"
         >
-          Continue with {plans.find(p => p.id === selectedPlan)?.name}
+          {isProcessingPayment ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              {paymentPlan === selectedPlan ? 'Opening Checkout...' : 'Processing...'}
+            </>
+          ) : selectedPlan === 'free' ? (
+            `Start with ${plans.find(p => p.id === selectedPlan)?.name}`
+          ) : (
+            <>
+              <CreditCard className="h-4 w-4 mr-2" />
+              Continue with {plans.find(p => p.id === selectedPlan)?.name}
+            </>
+          )}
         </Button>
+        
+        {selectedPlan !== 'free' && (
+          <p className="text-sm text-gray-500 mt-3">
+            🔒 Secure payment powered by Paddle • Cancel anytime
+          </p>
+        )}
       </div>
     </div>
   );

@@ -36,16 +36,26 @@ const Onboarding = () => {
   };
 
   const handleReferralSourceSelected = (source: string, details?: string) => {
+    console.log('Referral source selected:', source, details);
+    console.log('Current step before update:', currentStep);
+    
     setOnboardingData(prev => ({ 
       ...prev, 
       referralSource: source,
       referralDetails: details || ""
     }));
+    
+    console.log('Setting current step to plan-selection');
     setCurrentStep("plan-selection");
   };
 
   const handlePlanSelected = (planId: string) => {
+    console.log('Plan selected:', planId);
+    console.log('Current step before plan update:', currentStep);
+    
     setOnboardingData(prev => ({ ...prev, selectedPlan: planId }));
+    
+    console.log('Setting current step to workspace-creation');
     setCurrentStep("workspace-creation");
   };
 
@@ -59,6 +69,8 @@ const Onboarding = () => {
   };
 
   const renderCurrentStep = () => {
+    console.log('Rendering current step:', currentStep);
+    
     switch (currentStep) {
       case "email-verification":
         return (

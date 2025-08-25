@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status, BackgroundTasks, Request
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import os
 import logging
 import time
 from pathlib import Path
 import asyncio
+import uuid
 
 # Import our existing utilities and services
 from utils.firebase_storage import upload_audio_file_streaming
@@ -13,12 +14,25 @@ from utils.firebase_firestore import save_complete_podcast_workflow
 from routes.deepgram_transcription import transcribe_with_deepgram_api, extract_words_with_speakers, validate_audio_file
 from routes.gemini_seo import generate_seo_content_with_gemini, SEOGenerationRequest
 
+# Import scalability components
+from utils.monitoring import monitor_performance, metrics_collector
+from utils.circuit_breaker import resilient_call, fallback_handler
+from utils.connection_pool import get_http_client, cached_operation
+from utils.rate_limiter import rate_limit
+from utils.job_queue import job_queue
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 # Pydantic models
 class WorkflowResponse(BaseModel):
@@ -36,6 +50,7 @@ class WorkflowResponse(BaseModel):
 class QuickUploadResponse(BaseModel):
     success: bool
     upload_id: Optional[str] = None
+    job_id: Optional[str] = None
     message: Optional[str] = None
     storage_info: Optional[Dict[str, Any]] = None
     processing_started: Optional[bool] = None
@@ -49,9 +64,11 @@ class WorkflowStep:
         self.seo_generation = False
         self.firestore_save = False
 
+@monitor_performance(stage="upload_to_storage")
+@resilient_call(service_name="firebase")
 async def step_1_upload_to_storage(file: UploadFile, user_id: str) -> Dict[str, Any]:
     """
-    Step 1: Upload audio file to Firebase Storage
+    Step 1: Upload audio file to Firebase Storage with resilience
     
     Returns: storage_path, public_url, file_size, filename
     """
@@ -60,41 +77,61 @@ async def step_1_upload_to_storage(file: UploadFile, user_id: str) -> Dict[str, 
         
         logger.info(f"🚀 Step 1: Uploading {file.filename} to Firebase Storage for user {user_id}")
         
-        # Upload to Firebase Storage using fast streaming method
-        storage_path, public_url = upload_audio_file_streaming(
-            file=file,
-            user_id=user_id
-        )
-        
-        # Get file size from uploaded file info
-        from utils.firebase_storage import get_file_info
-        file_info = get_file_info(storage_path)
-        file_size = file_info.get("size", 0)
-        
-        step_duration = time.time() - step_start_time
-        
-        result = {
-            "storage_path": storage_path,
-            "public_url": public_url,
-            "file_size": file_size,
-            "filename": os.path.basename(storage_path),
-            "original_filename": file.filename,
-            "upload_duration_seconds": step_duration
-        }
-        
-        logger.info(f"✅ Step 1 Complete: File uploaded to {storage_path} in {step_duration:.2f} seconds")
-        return result
+        # Check cache for recent upload
+        cache_key = f"upload:{user_id}:{file.filename}:{file.size}"
+        async with cached_operation(cache_key, "upload_data", ttl=300) as cache_context:
+            if hasattr(cache_context, 'result') and cache_context.result:
+                logger.info(f"📦 Using cached upload result for {file.filename}")
+                return cache_context.result
+            
+            # Upload to Firebase Storage using fast streaming method
+            storage_path, public_url = upload_audio_file_streaming(
+                file=file,
+                user_id=user_id
+            )
+            
+            # Get file size from uploaded file info
+            from utils.firebase_storage import get_file_info
+            file_info = get_file_info(storage_path)
+            file_size = file_info.get("size", 0)
+            
+            step_duration = time.time() - step_start_time
+            
+            result = {
+                "storage_path": storage_path,
+                "public_url": public_url,
+                "file_size": file_size,
+                "filename": os.path.basename(storage_path),
+                "original_filename": file.filename,
+                "upload_duration_seconds": step_duration
+            }
+            
+            # Cache the result
+            if hasattr(cache_context, 'set_result'):
+                await cache_context.set_result(result)
+            
+            logger.info(f"✅ Step 1 Complete: File uploaded to {storage_path} in {step_duration:.2f} seconds")
+            return result
         
     except Exception as e:
         logger.error(f"❌ Step 1 Failed: {str(e)}")
+        # Record error metrics
+        await metrics_collector.record_processing_metrics(
+            stage="upload_to_storage",
+            duration=time.time() - step_start_time,
+            success=False,
+            error_type=type(e).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Upload step failed: {str(e)}"
         )
 
+@monitor_performance(stage="transcribe_audio")
+@resilient_call(service_name="deepgram")
 async def step_2_transcribe_audio(file: UploadFile, filename: str) -> Dict[str, Any]:
     """
-    Step 2: Transcribe audio using Deepgram Nova-2
+    Step 2: Transcribe audio using Deepgram Nova-2 with resilience
     
     Returns: transcript, words, metadata
     """
@@ -111,8 +148,16 @@ async def step_2_transcribe_audio(file: UploadFile, filename: str) -> Dict[str, 
             temp_file_path = temp_file.name
         
         try:
-            # Transcribe with Deepgram
-            deepgram_response = await transcribe_with_deepgram_api(temp_file_path, filename)
+            # Check cache for recent transcription
+            cache_key = f"transcription:{filename}:{file.size}"
+            async with cached_operation(cache_key, "transcription_data", ttl=3600) as cache_context:
+                if hasattr(cache_context, 'result') and cache_context.result:
+                    logger.info(f"📦 Using cached transcription for {filename}")
+                    return cache_context.result
+                
+                # Transcribe with Deepgram using HTTP client pool
+                http_client = await get_http_client("deepgram")
+                deepgram_response = await transcribe_with_deepgram_api(temp_file_path, filename)
             
             # Extract transcript and words
             transcript, words = extract_words_with_speakers(deepgram_response)
@@ -157,35 +202,48 @@ async def step_2_transcribe_audio(file: UploadFile, filename: str) -> Dict[str, 
             detail=f"Transcription step failed: {str(e)}"
         )
 
+@monitor_performance(stage="generate_seo_content")
+@resilient_call(service_name="gemini")
 async def step_3_generate_seo_content(transcript: str, filename: str, words_data: list) -> Dict[str, Any]:
     """
-    Step 3: Generate SEO content using Gemini 1.5 Pro
+    Step 3: Generate SEO content using Gemini 1.5 Pro with resilience
     
     Returns: seo_title, show_notes, blog_post, social_media, metadata
     """
     try:
         logger.info(f"✨ Step 3: Generating SEO content for {filename} using Gemini 1.5 Pro")
         
-        # Create SEO generation request
-        seo_request = SEOGenerationRequest(
-            transcript=transcript,
-            podcast_title=filename
-        )
+        # Check cache for recent SEO generation
+        import hashlib
+        transcript_hash = hashlib.md5(transcript.encode()).hexdigest()[:16]
+        cache_key = f"seo:{transcript_hash}:{filename}"
         
-        # Generate SEO content
-        gemini_result = await generate_seo_content_with_gemini(seo_request)
+        async with cached_operation(cache_key, "seo_data", ttl=7200) as cache_context:
+            if hasattr(cache_context, 'result') and cache_context.result:
+                logger.info(f"📦 Using cached SEO content for {filename}")
+                return cache_context.result
+            
+            # Generate SEO content with Gemini using HTTP client pool
+            http_client = await get_http_client("gemini")
+            seo_request = SEOGenerationRequest(
+                transcript=transcript,
+                filename=filename,
+                words_data=words_data
+            )
+            
+            seo_response = await generate_seo_content_with_gemini(seo_request)
         
         result = {
-            "seo_title": gemini_result.get("seo_title", ""),
-            "show_notes": gemini_result.get("show_notes", []),
-            "blog_post": gemini_result.get("blog_post", {}),
-            "social_media": gemini_result.get("social_media", {}),
+            "seo_title": seo_response.get("seo_title", ""),
+            "show_notes": seo_response.get("show_notes", []),
+            "blog_post": seo_response.get("blog_post", {}),
+            "social_media": seo_response.get("social_media", {}),
             "generation_metadata": {
                 "model": "gemini-1.5-pro",
                 "transcript_length": len(transcript),
-                "show_notes_count": len(gemini_result.get("show_notes", [])),
-                "blog_post_word_count": len(gemini_result.get("blog_post", {}).get("body", "").split()),
-                "social_platforms": len(gemini_result.get("social_media", {}))
+                "show_notes_count": len(seo_response.get("show_notes", [])),
+                "blog_post_word_count": len(seo_response.get("blog_post", {}).get("body", "").split()),
+                "social_platforms": len(seo_response.get("social_media", {}))
             }
         }
         
@@ -199,6 +257,8 @@ async def step_3_generate_seo_content(transcript: str, filename: str, words_data
             detail=f"SEO generation step failed: {str(e)}"
         )
 
+@monitor_performance(stage="save_to_firestore")
+@resilient_call(service_name="firebase")
 async def step_4_save_to_firestore(
     user_id: str,
     filename: str,
@@ -271,6 +331,7 @@ async def step_4_save_to_firestore(
         )
 
 async def process_workflow_background(
+    job_id: str,
     upload_id: str,
     storage_path: str,
     public_url: str,
@@ -280,11 +341,13 @@ async def process_workflow_background(
     workspace_id: str = None
 ):
     """
-    Background task to process the complete workflow after upload
+    Background task to process the complete workflow after upload with job tracking
     """
     try:
         processing_start_time = time.time()
-        logger.info(f"🔄 Background processing started for upload_id: {upload_id}")
+        logger.info(f"🔄 Background processing started for job_id: {job_id}, upload_id: {upload_id}")
+        
+        # Processing started
         
         # Create temporary file for transcription
         download_start_time = time.time()
@@ -388,6 +451,8 @@ async def process_workflow_background(
             logger.info(f"⏱️  Total processing time: {total_processing_time:.2f} seconds")
             logger.info(f"📊 Processing breakdown: Download: {download_time:.1f}s | Transcription: {transcription_time:.1f}s | SEO: {seo_time:.1f}s | Save: {firestore_time:.1f}s")
             
+            # Processing completed successfully
+            
         finally:
             # Clean up temporary file
             if os.path.exists(temp_file_path):
@@ -395,201 +460,93 @@ async def process_workflow_background(
                 
     except Exception as e:
         logger.error(f"❌ Background processing failed for upload_id: {upload_id}, error: {str(e)}")
+        
+        # Processing failed
+        
+    except Exception as e:
+        logger.error(f"❌ Quick upload failed: {str(e)}")
+        return QuickUploadResponse(
+            success=False,
+            error=f"Quick upload failed: {str(e)}"
+        )
 
-@router.post("/process-podcast", response_model=WorkflowResponse)
-async def process_complete_podcast_workflow(
-    file: UploadFile = File(..., description="Podcast audio file (MP3, M4A, WAV, FLAC, OGG) - up to 500MB"),
-    user_id: str = Form(..., description="User ID for organizing the podcast")
-):
+@router.post("/quick-upload-and-process")
+async def quick_upload_and_process(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+    workspace_id: Optional[str] = Form(None)
+) -> QuickUploadResponse:
     """
-    Complete Podcast Processing Workflow
-    
-    This endpoint orchestrates the entire podcast processing pipeline:
-    
-    1. **Upload** → Firebase Storage (get public URL)
-    2. **Transcribe** → Deepgram Nova-2 (word timestamps + speakers)  
-    3. **Generate** → Gemini 1.5 Pro (SEO content suite)
-    4. **Save** → Firestore (complete metadata)
-    
-    Perfect for podcasters who want a single API call to:
-    - Store their audio file securely in the cloud
-    - Get a professional transcript with speaker identification
-    - Generate viral SEO content for all platforms
-    - Save everything for easy retrieval and management
-    
-    **Processing Time:** 5-90 minutes depending on episode length
-    **Max File Size:** 500MB (supports 2+ hour episodes)
-    **Output:** Complete podcast document with all processed data
+    Quick upload and process endpoint with job management
+    Uploads file and starts background processing with unique job_id
     """
-    
-    workflow_start_time = time.time()
-    steps = WorkflowStep()
-    
-    # Initialize result containers
-    storage_info = {}
-    transcription_info = {}
-    seo_info = {}
-    firestore_info = {}
-    
     try:
+        logger.info(f"🚀 Quick upload started for user: {user_id}, file: {file.filename}")
+        
         # Validate file
         if not file.filename:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No filename provided"
+                detail="No file provided"
             )
         
-        # Validate audio format
-        if not validate_audio_file(file):
+        # Validate audio file
+        validation_result = validate_audio_file(file)
+        if not validation_result["valid"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unsupported file format. Supported: MP3, M4A, WAV, FLAC, OGG"
+                detail=validation_result["error"]
             )
         
-        logger.info(f"🚀 Starting complete podcast workflow for user {user_id}: {file.filename}")
-        
-        # Step 1: Upload to Firebase Storage
-        storage_info = await step_1_upload_to_storage(file, user_id)
-        steps.upload = True
-        
-        # Step 2: Transcribe with Deepgram
-        await file.seek(0)  # Reset file pointer
-        transcription_info = await step_2_transcribe_audio(file, storage_info["original_filename"])
-        steps.transcription = True
-        
-        # Step 3: Generate SEO content with Gemini
-        seo_info = await step_3_generate_seo_content(
-            transcript=transcription_info["transcript"],
-            filename=storage_info["original_filename"],
-            words_data=transcription_info["words"]
-        )
-        steps.seo_generation = True
-        
-        # Step 4: Save everything to Firestore
-        firestore_info = await step_4_save_to_firestore(
+        # Upload file to Firebase Storage
+        storage_path, public_url = upload_audio_file_streaming(
+            file=file,
             user_id=user_id,
-            filename=storage_info["original_filename"],
-            audio_url=storage_info["public_url"],
-            storage_path=storage_info["storage_path"],
-            file_size=storage_info["file_size"],
-            transcription_data=transcription_info,
-            seo_data=seo_info
-        )
-        steps.firestore_save = True
-        
-        # Calculate total processing time
-        total_processing_time = time.time() - workflow_start_time
-        
-        logger.info(f"🎉 Complete workflow finished successfully in {total_processing_time/60:.1f} minutes")
-        logger.info(f"📄 Document ID: {firestore_info['doc_id']}")
-        
-        return WorkflowResponse(
-            success=True,
-            doc_id=firestore_info["doc_id"],
-            processing_time=round(total_processing_time, 2),
-            steps_completed={
-                "upload": steps.upload,
-                "transcription": steps.transcription,
-                "seo_generation": steps.seo_generation,
-                "firestore_save": steps.firestore_save
-            },
-            storage_info=storage_info,
-            transcription_info={
-                "transcript_length": len(transcription_info["transcript"]),
-                "word_count": transcription_info["word_count"],
-                "speakers_detected": transcription_info["speakers_detected"],
-                "model": transcription_info["model"]
-            },
-            seo_info={
-                "seo_title": seo_info["seo_title"],
-                "show_notes_count": len(seo_info["show_notes"]),
-                "blog_post_generated": bool(seo_info["blog_post"]),
-                "social_platforms": len(seo_info["social_media"])
-            },
-            firestore_info={
-                "doc_id": firestore_info["doc_id"],
-                "collection": "podcasts"
-            },
-            saved_document=firestore_info["saved_document"]
+            custom_filename=file.filename
         )
         
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(f"💥 Workflow failed: {str(e)}")
+        # Generate upload_id from storage path
+        upload_id = storage_path.split('/')[-1].split('.')[0]  # Extract filename without extension
         
-        # Calculate partial processing time
-        partial_time = time.time() - workflow_start_time
+        # Get file size
+        file_size = 0
+        if hasattr(file, 'size') and file.size:
+            file_size = file.size
+        else:
+            # Fallback: read file to get size
+            content = await file.read()
+            file_size = len(content)
+            await file.seek(0)  # Reset file pointer
         
-        return WorkflowResponse(
-            success=False,
-            processing_time=round(partial_time, 2),
-            steps_completed={
-                "upload": steps.upload,
-                "transcription": steps.transcription,
-                "seo_generation": steps.seo_generation,
-                "firestore_save": steps.firestore_save
-            },
-            storage_info=storage_info if storage_info else None,
-            transcription_info=transcription_info if transcription_info else None,
-            seo_info=seo_info if seo_info else None,
-            firestore_info=firestore_info if firestore_info else None,
-            error=f"Workflow failed: {str(e)}"
-        )
-
-@router.post("/quick-upload", response_model=QuickUploadResponse)
-async def quick_upload_and_process(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(..., description="Podcast audio file - upload happens immediately, processing in background"),
-    user_id: str = Form(..., description="User ID for organizing the podcast"),
-    workspace_id: str = Form(None, description="Workspace ID to organize the podcast (optional)")
-):
-    """
-    🚀 FASTEST UPLOAD METHOD: Upload immediately, process in background
-    
-    This endpoint:
-    1. Uploads your file to storage immediately (returns in seconds)
-    2. Starts background processing (transcription, SEO generation, etc.)
-    3. You can check status or results later
-    
-    Perfect for large files - no more waiting!
-    """
-    try:
-        upload_id = f"upload_{int(time.time())}_{user_id}"
+        # Generate unique job_id for tracking
+        job_id = str(uuid.uuid4())
         
-        logger.info(f"🚀 Quick upload started for {file.filename}, upload_id: {upload_id}")
+        logger.info(f"✅ Processing started with ID: {job_id}")
         
-        # Step 1: Fast upload only
-        upload_result = await step_1_upload_to_storage(file, user_id)
-        
-        # Add background task for processing
+        # Start background processing
         background_tasks.add_task(
             process_workflow_background,
+            job_id=job_id,
             upload_id=upload_id,
-            storage_path=upload_result["storage_path"],
-            public_url=upload_result["public_url"],
-            file_size=upload_result["file_size"],
-            filename=upload_result["filename"],
+            storage_path=storage_path,
+            public_url=public_url,
+            file_size=file_size,
+            filename=file.filename or "unknown",
             user_id=user_id,
             workspace_id=workspace_id
         )
         
-        logger.info(f"✅ Quick upload completed, background processing started for upload_id: {upload_id}")
-        
         return QuickUploadResponse(
             success=True,
             upload_id=upload_id,
+            job_id=job_id,
             message="File uploaded successfully! Processing started in background.",
-            storage_info={
-                "storage_path": upload_result["storage_path"],
-                "public_url": upload_result["public_url"],
-                "file_size": upload_result["file_size"],
-                "filename": upload_result["filename"]
-            },
             processing_started=True
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Quick upload failed: {str(e)}")
         return QuickUploadResponse(
@@ -654,4 +611,6 @@ async def workflow_service_info():
         ],
         "error_handling": "Partial completion tracking - see which steps succeeded",
         "scalability": "Handles enterprise podcast processing volumes"
-    } 
+    }
+
+ 

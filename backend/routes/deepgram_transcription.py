@@ -53,19 +53,22 @@ class UrlTranscriptionRequest(BaseModel):
     file_url: str
     custom_filename: Optional[str] = None
 
-def validate_audio_file(file: UploadFile) -> bool:
+def validate_audio_file(file: UploadFile) -> dict:
     """Validate if the uploaded file is a supported audio format"""
     # Check MIME type
     if file.content_type and file.content_type.lower() in SUPPORTED_AUDIO_TYPES:
-        return True
+        return {"valid": True, "error": None}
     
     # Check file extension as fallback
     if file.filename:
         file_ext = Path(file.filename).suffix.lower()
         if file_ext in SUPPORTED_EXTENSIONS:
-            return True
+            return {"valid": True, "error": None}
     
-    return False
+    # Invalid file type
+    supported_types = ", ".join(SUPPORTED_EXTENSIONS)
+    error_msg = f"Unsupported file type. Please upload one of: {supported_types}"
+    return {"valid": False, "error": error_msg}
 
 def get_deepgram_api_key() -> str:
     """Get Deepgram API key from environment variables"""

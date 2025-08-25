@@ -27,32 +27,85 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { podcastApi, PodcastUploadResponse } from "@/services/podcastApi";
 import { toast } from "sonner";
+import { getStoredUploadState, updateStoredUploadState, clearStoredUploadState, storeFileData, getStoredFile, hasStoredUploadState } from "@/utils/uploadStorage";
 
 const Upload = () => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const { workspaces, currentWorkspace } = useWorkspace();
+
   
   const [uploadMethod, setUploadMethod] = useState<"file" | "url">("file");
   const [selectedWorkspace, setSelectedWorkspace] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingStep, setProcessingStep] = useState<"idle" | "uploading" | "transcribing" | "generating" | "saving" | "complete">("idle");
-  const [file, setFile] = useState<File | null>(null);
-  const [url, setUrl] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [podcastUrl, setPodcastUrl] = useState("");
   const [episodeTitle, setEpisodeTitle] = useState("");
   const [episodeDescription, setEpisodeDescription] = useState("");
+  const [isRestoringState, setIsRestoringState] = useState(false);
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [completedEpisodeId, setCompletedEpisodeId] = useState<string | null>(null);
 
-  // Set current workspace as default if available
+  // Restore upload state from localStorage on mount
   useEffect(() => {
-    if (currentWorkspace && !selectedWorkspace) {
-      setSelectedWorkspace(currentWorkspace.id);
+    const restoreUploadState = async () => {
+      if (hasStoredUploadState()) {
+        setIsRestoringState(true);
+        
+        try {
+          const storedState = getStoredUploadState();
+          
+          // Restore form fields
+          setUploadMethod(storedState.uploadMethod);
+          setSelectedWorkspace(storedState.selectedWorkspace);
+          setEpisodeTitle(storedState.episodeTitle);
+          setEpisodeDescription(storedState.episodeDescription);
+          
+          // Restore file if it exists
+          if (storedState.fileData) {
+            const restoredFile = getStoredFile();
+            if (restoredFile) {
+              setSelectedFile(restoredFile);
+              toast.success(
+                `📁 Restored uploaded file: ${restoredFile.name}`,
+                { duration: 3000 }
+              );
+            }
+          }
+          
+          // Restore URL if it exists
+          if (storedState.urlData) {
+            setPodcastUrl(storedState.urlData.url);
+            toast.success(
+              `🔗 Restored podcast URL`,
+              { duration: 3000 }
+            );
+          }
+          
+          console.log('✅ Upload state restored from localStorage');
+        } catch (error) {
+          console.warn('Failed to restore upload state:', error);
+          clearStoredUploadState();
+        } finally {
+          setIsRestoringState(false);
+        }
+      }
+    };
+    
+    restoreUploadState();
+  }, []);
+
+  // Set default workspace when workspaces load
+  useEffect(() => {
+    if (workspaces.length > 0 && !selectedWorkspace) {
+      const defaultWorkspace = currentWorkspace || workspaces[0];
+      setSelectedWorkspace(defaultWorkspace.id);
     }
-  }, [currentWorkspace, selectedWorkspace]);
+  }, [workspaces, currentWorkspace, selectedWorkspace]);
 
   const contentTypes = [
     { icon: FileText, name: "SEO Blog Post", description: "Search-optimized article", color: "bg-emerald-500" },
@@ -61,18 +114,30 @@ const Upload = () => {
     { icon: Mic, name: "SEO Metadata", description: "Titles & descriptions", color: "bg-orange-500" }
   ];
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      if (!episodeTitle) {
-        setEpisodeTitle(selectedFile.name.replace(/\.[^/.]+$/, ""));
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setEpisodeTitle(file.name.replace(/\.[^/.]+$/, ""));
+      
+      // Store file in localStorage for persistence
+      try {
+        await storeFileData(file);
+        // Also update other form state
+        updateStoredUploadState({
+          uploadMethod,
+          selectedWorkspace,
+          episodeTitle: file.name.replace(/\.[^/.]+$/, ""),
+          episodeDescription,
+        });
+      } catch (error) {
+        console.warn('Failed to store file data:', error);
       }
     }
   };
 
   const processWithBackend = async () => {
-    if (!file || !currentUser) {
+    if (!selectedFile || !currentUser) {
       toast.error("Please select a file and ensure you're logged in");
       return;
     }
@@ -87,7 +152,7 @@ const Upload = () => {
       // Step 1: Quick upload to get upload_id with animated progress
       setProcessingProgress(10);
       const uploadResponse: PodcastUploadResponse = await podcastApi.quickUploadAndProcess(
-        file,
+        selectedFile,
         currentUser.uid,
         selectedWorkspace || undefined
       );
@@ -100,6 +165,9 @@ const Upload = () => {
       setUploadProgress(100);
       setProcessingProgress(25);
       toast.success("File uploaded successfully! Processing started...");
+
+      // Clear upload state since processing has started
+      clearStoredUploadState();
 
       // Step 2: Transcription with animated progress
       setProcessingStep("transcribing");
@@ -190,19 +258,68 @@ const Upload = () => {
       setError(error instanceof Error ? error.message : "An error occurred during processing");
       toast.error("Processing failed. Please try again.");
       setProcessingProgress(0);
-      setIsProcessing(false); // Only reset on error
+      setIsProcessing(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (uploadMethod === "file" && file) {
+    
+    if (uploadMethod === "file" && !selectedFile) {
+      toast.error("Please select a file");
+      return;
+    }
+    
+    if (uploadMethod === "url" && !podcastUrl) {
+      toast.error("Please enter a podcast URL");
+      return;
+    }
+
+    if (uploadMethod === "file" && selectedFile) {
       processWithBackend();
-    } else if (uploadMethod === "url" && url) {
+    } else if (uploadMethod === "url" && podcastUrl) {
       toast.error("URL upload not yet implemented");
     } else {
       toast.error("Please select a file or enter a URL");
     }
+  };
+
+  const handleDrop = async (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) {
+      setSelectedFile(file);
+      setEpisodeTitle(file.name.replace(/\.[^/.]+$/, ""));
+      
+      // Store file in localStorage for persistence
+      try {
+        await storeFileData(file);
+        // Also update other form state
+        updateStoredUploadState({
+          uploadMethod,
+          selectedWorkspace,
+          episodeTitle: file.name.replace(/\.[^/.]+$/, ""),
+          episodeDescription,
+        });
+      } catch (error) {
+        console.warn('Failed to store file data:', error);
+      }
+    }
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+  };
+
+  // Update localStorage when form fields change
+  const handleFormFieldChange = (field: string, value: string) => {
+    updateStoredUploadState({
+      uploadMethod,
+      selectedWorkspace,
+      episodeTitle,
+      episodeDescription,
+      [field]: value,
+    });
   };
 
   const isCurrentlyProcessing = processingStep !== "idle";
@@ -216,6 +333,12 @@ const Upload = () => {
           <p className="text-gray-600 text-lg">
             Transform your podcast episode into SEO content in minutes
           </p>
+          {isRestoringState && (
+            <div className="mt-2 flex items-center gap-2 text-blue-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm">Restoring previous upload...</span>
+            </div>
+          )}
         </div>
 
         {/* Processing Status */}
@@ -283,7 +406,10 @@ const Upload = () => {
                 <div className="flex gap-4">
                   <Button
                     variant={uploadMethod === "file" ? "default" : "outline"}
-                    onClick={() => setUploadMethod("file")}
+                    onClick={() => {
+                      setUploadMethod("file");
+                      handleFormFieldChange('uploadMethod', 'file');
+                    }}
                     className="flex-1"
                   >
                     <UploadIcon className="h-4 w-4 mr-2" />
@@ -291,7 +417,10 @@ const Upload = () => {
                   </Button>
                   <Button
                     variant={uploadMethod === "url" ? "default" : "outline"}
-                    onClick={() => setUploadMethod("url")}
+                    onClick={() => {
+                      setUploadMethod("url");
+                      handleFormFieldChange('uploadMethod', 'url');
+                    }}
                     className="flex-1"
                   >
                     <LinkIcon className="h-4 w-4 mr-2" />
@@ -309,27 +438,27 @@ const Upload = () => {
                           id="file"
                           type="file"
                           accept="audio/*"
-                          onChange={handleFileChange}
+                          onChange={handleFileSelect}
                           className="hidden"
                         />
                         <label
                           htmlFor="file"
                           className={`flex flex-col items-center justify-center w-full h-40 border-3 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
-                            file 
+                            selectedFile 
                               ? 'border-emerald-400 bg-emerald-50 text-emerald-700' 
                               : 'border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-600'
                           }`}
+                          onDrop={handleDrop}
+                          onDragOver={handleDragOver}
                         >
-                          {file ? (
-                            <div className="flex items-center gap-4">
-                              <div className="p-3 bg-emerald-500 rounded-full">
-                                <FileAudio className="h-8 w-8 text-white" />
-                              </div>
-                              <div className="text-left">
-                                <p className="text-lg font-semibold text-emerald-800">{file.name}</p>
-                                <p className="text-sm text-emerald-600">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
-                                <CheckCircle className="h-5 w-5 text-emerald-500 mt-1" />
-                              </div>
+                          {selectedFile ? (
+                            <div className="text-center">
+                              <FileAudio className="mx-auto h-12 w-12 text-blue-600 mb-2" />
+                              <p className="text-sm font-medium text-gray-900">{selectedFile.name}</p>
+                              <p className="text-xs text-gray-500">
+                                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                              </p>
+                              <CheckCircle className="h-5 w-5 text-emerald-500 mt-2 mx-auto" />
                             </div>
                           ) : (
                             <div className="flex flex-col items-center">
@@ -352,8 +481,17 @@ const Upload = () => {
                       id="url"
                       type="url"
                       placeholder="https://example.com/episode.mp3"
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
+                      value={podcastUrl}
+                      onChange={(e) => {
+                        setPodcastUrl(e.target.value);
+                        updateStoredUploadState({
+                          uploadMethod,
+                          selectedWorkspace,
+                          episodeTitle,
+                          episodeDescription,
+                          urlData: { url: e.target.value }
+                        });
+                      }}
                       className="mt-2 h-12 text-base border-2 focus:border-blue-400"
                     />
                     <p className="text-sm text-gray-500 mt-2">
@@ -375,7 +513,13 @@ const Upload = () => {
               <CardContent className="space-y-6">
                 <div>
                   <Label htmlFor="workspace" className="text-base font-semibold">Workspace</Label>
-                  <Select value={selectedWorkspace} onValueChange={setSelectedWorkspace}>
+                  <Select 
+                    value={selectedWorkspace} 
+                    onValueChange={(value) => {
+                      setSelectedWorkspace(value);
+                      handleFormFieldChange('selectedWorkspace', value);
+                    }}
+                  >
                     <SelectTrigger className="mt-2 h-12 border-2 focus:border-blue-400">
                       <SelectValue placeholder="Select a workspace" />
                     </SelectTrigger>
@@ -394,7 +538,10 @@ const Upload = () => {
                   <Input
                     id="title"
                     value={episodeTitle}
-                    onChange={(e) => setEpisodeTitle(e.target.value)}
+                    onChange={(e) => {
+                      setEpisodeTitle(e.target.value);
+                      handleFormFieldChange('episodeTitle', e.target.value);
+                    }}
                     placeholder="Enter episode title"
                     className="mt-2 h-12 text-base border-2 focus:border-blue-400"
                   />
@@ -405,7 +552,10 @@ const Upload = () => {
                   <Textarea
                     id="description"
                     value={episodeDescription}
-                    onChange={(e) => setEpisodeDescription(e.target.value)}
+                    onChange={(e) => {
+                      setEpisodeDescription(e.target.value);
+                      handleFormFieldChange('episodeDescription', e.target.value);
+                    }}
                     placeholder="Brief description of the episode content..."
                     className="mt-2 text-base border-2 focus:border-blue-400"
                     rows={4}
@@ -416,7 +566,6 @@ const Upload = () => {
           </div>
         )}
 
-        {/* Submit Button */}
         {/* Error Display */}
         {error && (
           <div className="flex justify-center mb-6">
@@ -438,7 +587,7 @@ const Upload = () => {
                 type="submit"
                 size="lg"
                 className="blue-gradient-intense text-white shadow-2xl px-12 py-4 text-xl font-bold"
-                disabled={!selectedWorkspace || (!file && !url) || !episodeTitle || isProcessing}
+                disabled={!selectedWorkspace || (!selectedFile && !podcastUrl) || !episodeTitle || isProcessing}
               >
                 <Mic className="h-6 w-6 mr-3" />
                 Start Processing
